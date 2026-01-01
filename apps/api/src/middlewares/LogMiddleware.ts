@@ -3,6 +3,7 @@ import { getDB, schemas } from "@anycrawl/db";
 import { log } from "@anycrawl/libs/log";
 import { captureResponseBody, CapturedResponse } from "../utils/responseCapture.js";
 import { RequestWithAuth } from "@anycrawl/libs";
+import { getClientIp } from "../utils/ipUtils.js";
 
 export const logMiddleware = async (req: RequestWithAuth, res: Response, next: NextFunction) => {
     // Skip logging for health check endpoint
@@ -41,7 +42,7 @@ export const logMiddleware = async (req: RequestWithAuth, res: Response, next: N
             processingTimeMs: res.getHeader("x-response-time") ? String(res.getHeader("x-response-time")).replace("ms", "") : null,
             // if success request, creditsUsed defaults to 1 unless explicitly set
             creditsUsed: (res.statusCode >= 200 && res.statusCode < 400) ? (req.creditsUsed ?? 1) : 0,
-            ipAddress: req.ip || null,
+            ipAddress: getClientIp(req),
             userAgent: req.headers["user-agent"] || null,
             requestPayload: requestPayload,
             requestHeader: req.headers,

@@ -25,6 +25,8 @@ export const apiKey = p.sqliteTable("api_key", {
     lastUsedAt: p.integer("last_used_at", { mode: "timestamp" }),
     // Optional expiration timestamp
     expiresAt: p.integer("expires_at", { mode: "timestamp" }),
+    // Allowed IP addresses whitelist (JSON array of IP addresses or CIDR ranges)
+    allowedIps: p.text("allowed_ips", { mode: "json" }).$type<string[]>(),
 });
 
 export const requestLog = p.sqliteTable("request_log", {

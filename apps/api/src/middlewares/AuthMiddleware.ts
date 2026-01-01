@@ -2,6 +2,7 @@ import { Response, NextFunction } from "express";
 import { getDB, schemas, eq } from "@anycrawl/db";
 import { RequestWithAuth } from "@anycrawl/libs";
 import { log } from "@anycrawl/libs/log";
+import { getClientIp, isIpAllowed } from "../utils/ipUtils.js";
 export const authMiddleware = async (
     req: RequestWithAuth,
     res: Response,
@@ -49,6 +50,20 @@ export const authMiddleware = async (
             res.status(401).json({ success: false, error: "API key is inactive" });
             return;
         }
+
+        // Check IP whitelist if configured
+        if (key.allowedIps && key.allowedIps.length > 0) {
+            const clientIp = getClientIp(req);
+            if (!isIpAllowed(clientIp, key.allowedIps)) {
+                res.status(403).json({
+                    success: false,
+                    error: "IP address not allowed",
+                    clientIp: clientIp || "unknown",
+                });
+                return;
+            }
+        }
+
         // Add API key info to request for use in other middlewares
         req.auth = key;
 

@@ -22,6 +22,13 @@
       "when": 1759675894999,
       "tag": "0002_lovely_red_skull",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1767174937704,
+      "tag": "0003_free_guardian",
+      "breakpoints": true
     }
   ]
 }

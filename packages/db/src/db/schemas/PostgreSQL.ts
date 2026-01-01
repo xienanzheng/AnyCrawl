@@ -25,6 +25,8 @@ export const apiKey = p.pgTable("api_key", {
     lastUsedAt: p.timestamp("last_used_at"),
     // Optional expiration timestamp
     expiresAt: p.timestamp("expires_at"),
+    // Allowed IP addresses whitelist (JSON array of IP addresses or CIDR ranges)
+    allowedIps: p.jsonb("allowed_ips").$type<string[]>(),
 });
 
 export const requestLog = p.pgTable("request_log", {
