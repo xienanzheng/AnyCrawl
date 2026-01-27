@@ -37,6 +37,8 @@ export const requestLog = p.sqliteTable("request_log", {
         .$defaultFn(() => randomUUID()),
     // API key that made the request
     apiKey: p.text("api_key_id").references(() => apiKey.uuid),
+    // User ID (from api_key.user, can be null)
+    userId: p.text("user_id"),
     // path that was called
     path: p.text("path").notNull(),
     // HTTP method used
@@ -85,6 +87,8 @@ export const jobs = p.sqliteTable("jobs", {
     payload: p.text("payload", { mode: "json" }).$type<string[]>(),
     // api key
     apiKey: p.text("api_key_id").references(() => apiKey.uuid),
+    // User ID (from api_key.user or api_key.uuid)
+    userId: p.text("user_id"),
     // total urls/pages found
     total: p.integer("total").notNull().default(0),
     // completed urls/pages
@@ -189,6 +193,8 @@ export const templateExecutions = p.sqliteTable("template_executions", {
     templateUuid: p.text("template_uuid").notNull().references(() => templates.uuid),
     // API key that made the request
     apiKey: p.text("api_key_id").references(() => apiKey.uuid),
+    // User ID (from api_key.user, can be null)
+    userId: p.text("user_id"),
     // Job information
     jobUuid: p.text("job_uuid").references(() => jobs.uuid),
     // Request processing time in milliseconds
@@ -201,4 +207,127 @@ export const templateExecutions = p.sqliteTable("template_executions", {
     errorMessage: p.text("error_message"),
     // Timestamp
     createdAt: p.integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+// Scheduled Tasks and Webhooks tables
+export const scheduledTasks = p.sqliteTable("scheduled_tasks", {
+    uuid: p
+        .text("uuid")
+        .primaryKey()
+        .$defaultFn(() => randomUUID()),
+    // API key that created this task
+    apiKey: p.text("api_key_id").references(() => apiKey.uuid),
+    // User ID (from api_key.user or api_key.uuid)
+    userId: p.text("user_id").notNull(),
+    name: p.text("name").notNull(),
+    description: p.text("description"),
+    taskType: p.text("task_type").notNull(),
+    taskPayload: p.text("task_payload", { mode: "json" }).notNull(),
+    cronExpression: p.text("cron_expression").notNull(),
+    timezone: p.text("timezone").default("UTC").notNull(),
+    concurrencyMode: p.text("concurrency_mode").default("skip").notNull(),
+    maxConcurrentExecutions: p.integer("max_concurrent_executions").default(1).notNull(),
+    maxExecutionsPerDay: p.integer("max_executions_per_day"),
+    minCreditsRequired: p.integer("min_credits_required").default(100).notNull(),
+    autoPauseOnLowCredits: p.integer("auto_pause_on_low_credits", { mode: "boolean" }).default(true).notNull(),
+    isActive: p.integer("is_active", { mode: "boolean" }).default(true).notNull(),
+    isPaused: p.integer("is_paused", { mode: "boolean" }).default(false).notNull(),
+    pauseReason: p.text("pause_reason"),
+    lastExecutionAt: p.integer("last_execution_at", { mode: "timestamp" }),
+    nextExecutionAt: p.integer("next_execution_at", { mode: "timestamp" }),
+    totalExecutions: p.integer("total_executions").default(0).notNull(),
+    successfulExecutions: p.integer("successful_executions").default(0).notNull(),
+    failedExecutions: p.integer("failed_executions").default(0).notNull(),
+    consecutiveFailures: p.integer("consecutive_failures").default(0).notNull(),
+    tags: p.text("tags", { mode: "json" }),
+    metadata: p.text("metadata", { mode: "json" }),
+    createdAt: p.integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: p.integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+export const taskExecutions = p.sqliteTable("task_executions", {
+    uuid: p
+        .text("uuid")
+        .primaryKey()
+        .$defaultFn(() => randomUUID()),
+    scheduledTaskUuid: p.text("scheduled_task_uuid").notNull().references(() => scheduledTasks.uuid, { onDelete: "cascade" }),
+    executionNumber: p.integer("execution_number").notNull(),
+    idempotencyKey: p.text("idempotency_key").notNull().unique(),
+    status: p.text("status").default("pending").notNull(),
+    startedAt: p.integer("started_at", { mode: "timestamp" }),
+    completedAt: p.integer("completed_at", { mode: "timestamp" }),
+    durationMs: p.integer("duration_ms"),
+    jobUuid: p.text("job_uuid").references(() => jobs.uuid),
+    creditsUsed: p.integer("credits_used").default(0).notNull(),
+    itemsProcessed: p.integer("items_processed").default(0).notNull(),
+    itemsSucceeded: p.integer("items_succeeded").default(0).notNull(),
+    itemsFailed: p.integer("items_failed").default(0).notNull(),
+    errorMessage: p.text("error_message"),
+    errorCode: p.text("error_code"),
+    errorDetails: p.text("error_details", { mode: "json" }),
+    triggeredBy: p.text("triggered_by").default("scheduler").notNull(),
+    scheduledFor: p.integer("scheduled_for", { mode: "timestamp" }).notNull(),
+    metadata: p.text("metadata", { mode: "json" }),
+    createdAt: p.integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+export const webhookSubscriptions = p.sqliteTable("webhook_subscriptions", {
+    uuid: p
+        .text("uuid")
+        .primaryKey()
+        .$defaultFn(() => randomUUID()),
+    // API key that created this webhook
+    apiKey: p.text("api_key_id").references(() => apiKey.uuid),
+    // User ID (from api_key.user or api_key.uuid)
+    userId: p.text("user_id").notNull(),
+    name: p.text("name").notNull(),
+    description: p.text("description"),
+    webhookUrl: p.text("webhook_url").notNull(),
+    webhookSecret: p.text("webhook_secret").notNull(),
+    scope: p.text("scope").default("all").notNull(),
+    specificTaskIds: p.text("specific_task_ids", { mode: "json" }),
+    eventTypes: p.text("event_types", { mode: "json" }).notNull(),
+    customHeaders: p.text("custom_headers", { mode: "json" }),
+    timeoutSeconds: p.integer("timeout_seconds").default(10).notNull(),
+    maxRetries: p.integer("max_retries").default(3).notNull(),
+    retryBackoffMultiplier: p.real("retry_backoff_multiplier").default(2).notNull(),
+    isActive: p.integer("is_active", { mode: "boolean" }).default(true).notNull(),
+    consecutiveFailures: p.integer("consecutive_failures").default(0).notNull(),
+    autoDisableAfterFailures: p.integer("auto_disable_after_failures").default(10).notNull(),
+    lastSuccessAt: p.integer("last_success_at", { mode: "timestamp" }),
+    lastFailureAt: p.integer("last_failure_at", { mode: "timestamp" }),
+    totalDeliveries: p.integer("total_deliveries").default(0).notNull(),
+    successfulDeliveries: p.integer("successful_deliveries").default(0).notNull(),
+    failedDeliveries: p.integer("failed_deliveries").default(0).notNull(),
+    tags: p.text("tags", { mode: "json" }),
+    metadata: p.text("metadata", { mode: "json" }),
+    createdAt: p.integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+    updatedAt: p.integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+export const webhookDeliveries = p.sqliteTable("webhook_deliveries", {
+    uuid: p
+        .text("uuid")
+        .primaryKey()
+        .$defaultFn(() => randomUUID()),
+    webhookSubscriptionUuid: p.text("webhook_subscription_uuid").notNull().references(() => webhookSubscriptions.uuid, { onDelete: "cascade" }),
+    eventType: p.text("event_type").notNull(),
+    eventSource: p.text("event_source").notNull(),
+    eventSourceId: p.text("event_source_id").notNull(),
+    status: p.text("status").default("pending").notNull(),
+    attemptNumber: p.integer("attempt_number").default(1).notNull(),
+    maxAttempts: p.integer("max_attempts").default(3).notNull(),
+    requestUrl: p.text("request_url").notNull(),
+    requestMethod: p.text("request_method").default("POST").notNull(),
+    requestHeaders: p.text("request_headers", { mode: "json" }),
+    requestBody: p.text("request_body", { mode: "json" }),
+    responseStatus: p.integer("response_status"),
+    responseHeaders: p.text("response_headers", { mode: "json" }),
+    responseBody: p.text("response_body"),
+    responseDurationMs: p.integer("response_duration_ms"),
+    errorMessage: p.text("error_message"),
+    errorCode: p.text("error_code"),
+    nextRetryAt: p.integer("next_retry_at", { mode: "timestamp" }),
+    createdAt: p.integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+    deliveredAt: p.integer("delivered_at", { mode: "timestamp" }),
 });

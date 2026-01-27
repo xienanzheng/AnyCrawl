@@ -15,6 +15,9 @@
         "template",
         "---Search---",
         "search",
+        "---Automation---",
+        "scheduled-tasks",
+        "webhooks",
         "---Self Host---",
         "docker",
         "proxy-rule"

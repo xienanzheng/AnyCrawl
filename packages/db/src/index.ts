@@ -29,5 +29,13 @@ export const existsTemplate = Template.exists;
 // Template system exports
 export { templates, templateExecutions } from "./db/schemas/PostgreSQL.js";
 
+// Scheduled tasks and webhooks exports
+export {
+    scheduledTasks,
+    taskExecutions,
+    webhookSubscriptions,
+    webhookDeliveries
+} from "./db/schemas/PostgreSQL.js";
+
 export { eq, and, gt, gte, sql, getDB, schemas, STATUS, JOB_RESULT_STATUS, Job };
 export type { CreateJobParams, CreateTemplateParams };

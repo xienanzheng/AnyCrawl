@@ -50,6 +50,11 @@
             "import": "./dist/types/ApiTypes.js",
             "default": "./dist/types/ApiTypes.js"
         },
+        "./types/WebhookEvents": {
+            "types": "./dist/types/WebhookEvents.d.ts",
+            "import": "./dist/types/WebhookEvents.js",
+            "default": "./dist/types/WebhookEvents.js"
+        },
         "./constants": {
             "import": "./dist/constants.js",
             "default": "./dist/constants.js"

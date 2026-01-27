@@ -47,6 +47,20 @@ await engineQueueManager.initializeEngines();
 QueueManager.getInstance();
 log.info("All queues and engines initialized and started");
 
+// Initialize Scheduler Manager (if enabled)
+if (process.env.ANYCRAWL_SCHEDULER_ENABLED === "true") {
+    const { SchedulerManager } = await import("./managers/Scheduler.js");
+    await SchedulerManager.getInstance().start();
+    log.info("✅ Scheduler Manager initialized");
+}
+
+// Initialize Webhook Manager (if enabled)
+if (process.env.ANYCRAWL_WEBHOOKS_ENABLED === "true") {
+    const { WebhookManager } = await import("./managers/Webhook.js");
+    await WebhookManager.getInstance().initialize();
+    log.info("✅ Webhook Manager initialized");
+}
+
 async function runJob(job: Job) {
     const engineType = job.data.engine || "cheerio";
     if (!ALLOWED_ENGINES.includes(engineType)) {
@@ -100,6 +114,11 @@ async function runJob(job: Job) {
         // Start the worker to handle new URLs
         log.info("Starting worker...");
         await Promise.all([
+            // Worker for scheduler queue (BullMQ repeatable jobs)
+            WorkerManager.getInstance().getWorker('scheduler', async (job: Job) => {
+                const { SchedulerManager } = await import("./managers/Scheduler.js");
+                await SchedulerManager.getInstance().processScheduledTaskJob(job);
+            }),
             // Workers for scrape jobs
             ...AVAILABLE_ENGINES.map((engineType: any) =>
                 WorkerManager.getInstance().getWorker(`scrape-${engineType}`, async (job: Job) => {
@@ -333,10 +352,32 @@ async function runJob(job: Job) {
 
         // Handle graceful shutdown
         process.on("SIGINT", async () => {
-            log.warning("Received SIGINT signal, stopping all crawlers...");
+            log.warning("Received SIGINT signal, stopping all services...");
             // Temporarily disable console.warn to prevent the pause message
             const originalWarn = console.warn;
             console.warn = () => { };
+
+            // Stop Scheduler Manager (if enabled)
+            if (process.env.ANYCRAWL_SCHEDULER_ENABLED === "true") {
+                try {
+                    const { SchedulerManager } = await import("./managers/Scheduler.js");
+                    await SchedulerManager.getInstance().stop();
+                    log.info("✅ Scheduler Manager stopped");
+                } catch (error) {
+                    log.error(`Error stopping Scheduler Manager: ${error}`);
+                }
+            }
+
+            // Stop Webhook Manager (if enabled)
+            if (process.env.ANYCRAWL_WEBHOOKS_ENABLED === "true") {
+                try {
+                    const { WebhookManager } = await import("./managers/Webhook.js");
+                    await WebhookManager.getInstance().stop();
+                    log.info("✅ Webhook Manager stopped");
+                } catch (error) {
+                    log.error(`Error stopping Webhook Manager: ${error}`);
+                }
+            }
 
             // Stop all engines
             await engineQueueManager.stopEngines();

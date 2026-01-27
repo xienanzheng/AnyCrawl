@@ -11,7 +11,7 @@ export interface CreateJobParams {
     req: {
         ip?: string;
         body?: any;
-        auth?: { uuid?: string };
+        auth?: { uuid?: string; user?: string };  // Added user field
     };
     payload?: any;
     status?: string;
@@ -34,11 +34,12 @@ export class Job {
     private static extractReqMeta(req: {
         ip?: string;
         body?: any;
-        auth?: { uuid?: string };
+        auth?: { uuid?: string; user?: string };
     }) {
         return {
             origin: req.ip,
             api_key_id: req.auth?.uuid,
+            user_id: req.auth?.user || null,  // Extract userId (can be null)
         };
     }
 
@@ -56,9 +57,10 @@ export class Job {
         is_success = false,
     }: CreateJobParams): Promise<void> {
         const db = await getDB();
-        const { origin, api_key_id } = Job.extractReqMeta(req);
+        const { origin, api_key_id, user_id } = Job.extractReqMeta(req);
         const job_expire_at = Job.getJobExpireAt(job_type);
 
+        // Store both apiKey and userId (dual field storage)
         await db.insert(schemas.jobs).values({
             jobId: job_id,
             jobType: job_type,
@@ -67,7 +69,8 @@ export class Job {
             url,
             payload: payload ?? req.body,
             status: status,
-            apiKey: api_key_id,
+            apiKey: api_key_id,      // Track which API key created this job
+            userId: user_id as any,         // Track which user owns this job (can be null)
             origin: origin,
             isSuccess: is_success,
             createdAt: new Date(),
@@ -75,7 +78,7 @@ export class Job {
         });
 
         try {
-            log.info(`[DB][Job] Created job_id=${job_id} type=${job_type} queue=${job_queue_name} origin=${origin} apiKey=${api_key_id ?? "none"}`);
+            log.info(`[DB][Job] Created job_id=${job_id} type=${job_type} queue=${job_queue_name} origin=${origin} apiKey=${api_key_id ?? "none"} userId=${user_id ?? "none"}`);
         } catch { }
     }
 
@@ -103,6 +106,7 @@ export class Job {
             try {
                 log.info(`[DB][Job] Cancelled job_id=${job_id} status=${STATUS.CANCELLED}`);
             } catch { }
+
             return job;
         }
         try {
@@ -138,6 +142,7 @@ export class Job {
         counts?: { total?: number; completed?: number; failed?: number }
     ) {
         const db = await getDB();
+
         await db.update(schemas.jobs).set({
             status: STATUS.COMPLETED,
             isSuccess: isSuccess,
@@ -172,6 +177,7 @@ export class Job {
         counts?: { total?: number; completed?: number; failed?: number }
     ) {
         const db = await getDB();
+
         await db.update(schemas.jobs).set({
             status: STATUS.FAILED,
             isSuccess: isSuccess,

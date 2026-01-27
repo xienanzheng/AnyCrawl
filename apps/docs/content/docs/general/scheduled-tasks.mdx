@@ -1,0 +1,630 @@
+---
+title: Scheduled Tasks
+description: Automate recurring scraping, crawling, and search operations with cron-based scheduling.
+icon: Calendar
+---
+
+## Introduction
+
+Scheduled Tasks allow you to automate recurring web scraping, crawling, and data collection operations using standard cron expressions. Perfect for monitoring websites, tracking price changes, archiving content, aggregating search results, or any periodic data collection needs.
+
+**Key Features**: Cron-based scheduling with timezone support, multiple concurrency modes, automatic failure handling, credit management, and webhook integration for event notifications.
+
+### Core Features
+
+- **Cron Expression Scheduling**: Use standard cron syntax to define execution schedules
+- **Timezone Support**: Execute tasks in any timezone (e.g., Asia/Shanghai, America/New_York)
+- **Concurrency Control**: Three modes - skip, queue, or replace concurrent executions
+- **Automatic Pause**: Auto-pause after consecutive failures to protect resources
+- **Credit Management**: Set minimum credit requirements and daily execution limits
+- **Execution History**: Track all executions with detailed status and metrics
+- **Webhook Integration**: Receive real-time notifications for task events
+
+## API Endpoints
+
+```
+POST   /v1/scheduled-tasks              # Create a scheduled task
+GET    /v1/scheduled-tasks              # List all tasks
+GET    /v1/scheduled-tasks/:taskId      # Get task details
+PUT    /v1/scheduled-tasks/:taskId      # Update task
+PATCH  /v1/scheduled-tasks/:taskId/pause   # Pause task
+PATCH  /v1/scheduled-tasks/:taskId/resume  # Resume task
+DELETE /v1/scheduled-tasks/:taskId      # Delete task
+GET    /v1/scheduled-tasks/:taskId/executions  # Get execution history
+```
+
+## Quick Start
+
+### Creating a Daily Scraping Task
+
+```bash tab="cURL"
+curl -X POST "https://api.anycrawl.dev/v1/scheduled-tasks" \
+  -H "Authorization: Bearer <your-api-key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Daily Tech News",
+    "description": "Scrape Hacker News daily at 9 AM",
+    "cron_expression": "0 9 * * *",
+    "timezone": "Asia/Shanghai",
+    "task_type": "scrape",
+    "task_payload": {
+      "url": "https://news.ycombinator.com",
+      "engine": "cheerio",
+      "formats": ["markdown"]
+    },
+    "concurrency_mode": "skip",
+    "max_executions_per_day": 1
+  }'
+```
+
+```javascript tab="JavaScript"
+const response = await fetch("https://api.anycrawl.dev/v1/scheduled-tasks", {
+  method: "POST",
+  headers: {
+    "Authorization": "Bearer YOUR_API_KEY",
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    name: "Daily Tech News",
+    cron_expression: "0 9 * * *",
+    timezone: "Asia/Shanghai",
+    task_type: "scrape",
+    task_payload: {
+      url: "https://news.ycombinator.com",
+      engine: "cheerio",
+      formats: ["markdown"]
+    }
+  })
+});
+
+const data = await response.json();
+console.log("Task ID:", data.data.task_id);
+console.log("Next execution:", data.data.next_execution_at);
+```
+
+```python tab="Python"
+import requests
+
+response = requests.post(
+    "https://api.anycrawl.dev/v1/scheduled-tasks",
+    headers={
+        "Authorization": "Bearer YOUR_API_KEY",
+        "Content-Type": "application/json"
+    },
+    json={
+        "name": "Daily Tech News",
+        "cron_expression": "0 9 * * *",
+        "timezone": "Asia/Shanghai",
+        "task_type": "scrape",
+        "task_payload": {
+            "url": "https://news.ycombinator.com",
+            "engine": "cheerio",
+            "formats": ["markdown"]
+        }
+    }
+)
+
+data = response.json()
+print(f"Task ID: {data['data']['task_id']}")
+print(f"Next execution: {data['data']['next_execution_at']}")
+```
+
+### Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "task_id": "550e8400-e29b-41d4-a716-446655440000",
+    "next_execution_at": "2026-01-28T01:00:00.000Z"
+  }
+}
+```
+
+## Cron Expression Guide
+
+Cron expressions use 5 fields to define the schedule:
+
+```
+* * * * *
+│ │ │ │ │
+│ │ │ │ └─ Day of week (0-7, 0 and 7 = Sunday)
+│ │ │ └─── Month (1-12)
+│ │ └───── Day of month (1-31)
+│ └─────── Hour (0-23)
+└───────── Minute (0-59)
+```
+
+### Common Examples
+
+| Expression | Description | Execution Time |
+|------------|-------------|----------------|
+| `0 9 * * *` | Every day at 9:00 AM | 09:00:00 daily |
+| `*/15 * * * *` | Every 15 minutes | :00, :15, :30, :45 |
+| `0 */6 * * *` | Every 6 hours | 00:00, 06:00, 12:00, 18:00 |
+| `0 9 * * 1` | Every Monday at 9 AM | Monday 09:00:00 |
+| `0 0 1 * *` | First day of month | 1st day, 00:00:00 |
+| `30 2 * * 0` | Every Sunday at 2:30 AM | Sunday 02:30:00 |
+
+<Callout type="info">
+Use [crontab.guru](https://crontab.guru/) to validate and understand cron expressions.
+</Callout>
+
+## Request Parameters
+
+### Task Configuration
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `name` | string | Yes | - | Task name (1-255 characters) |
+| `description` | string | No | - | Task description |
+| `cron_expression` | string | Yes | - | Standard cron expression (5 fields) |
+| `timezone` | string | No | `"UTC"` | Timezone for execution (e.g., "Asia/Shanghai") |
+| `task_type` | string | Yes | - | Task type: `"scrape"`, `"crawl"`, or `"search"` |
+| `task_payload` | object | Yes | - | Task configuration (see below) |
+
+### Concurrency Control
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `concurrency_mode` | string | No | `"skip"` | Mode: `"skip"`, `"queue"`, `"replace"` |
+| `max_concurrent_executions` | number | No | `1` | Maximum concurrent executions |
+| `max_executions_per_day` | number | No | - | Daily execution limit |
+
+### Resource Management
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `min_credits_required` | number | No | `100` | Minimum credits needed to execute |
+| `auto_pause_on_low_credits` | boolean | No | `true` | Auto-pause when credits insufficient |
+
+### Webhook Integration
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `webhook_ids` | string[] | No | - | Array of webhook subscription UUIDs to trigger |
+| `webhook_url` | string | No | - | Direct webhook URL (creates implicit subscription) |
+
+<Callout type="info">
+You can either use `webhook_ids` to reference existing webhook subscriptions, or provide a `webhook_url` to create an implicit webhook subscription for this task.
+</Callout>
+
+### Metadata
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `tags` | string[] | No | - | Tags for organization |
+| `metadata` | object | No | - | Custom metadata |
+
+## Task Payload
+
+### Scrape Task
+
+```json
+{
+  "url": "https://example.com/page",
+  "engine": "cheerio",
+  "formats": ["markdown"],
+  "timeout": 60000,
+  "wait_for": 2000,
+  "include_tags": ["article", "main"],
+  "exclude_tags": ["nav", "footer"]
+}
+```
+
+### Crawl Task
+
+```json
+{
+  "url": "https://example.com",
+  "engine": "playwright",
+  "options": {
+    "max_depth": 3,
+    "limit": 50,
+    "strategy": "same-domain",
+    "exclude_paths": ["/admin/*", "/api/*"],
+    "scrape_options": {
+      "formats": ["markdown"]
+    }
+  }
+}
+```
+
+### Search Task
+
+```json
+{
+  "query": "artificial intelligence news",
+  "engine": "google",
+  "limit": 20,
+  "country": "US",
+  "language": "en",
+  "time_range": "day"
+}
+```
+
+## Concurrency Modes
+
+### skip (Recommended)
+
+If a previous execution is still running, skip the current execution.
+
+**Best for**: Tasks that may take longer than the interval between executions.
+
+**Example**: A crawl job scheduled every hour that sometimes takes 90 minutes.
+
+### queue
+
+Queue the new execution and wait for the previous one to complete.
+
+**Best for**: Tasks where every execution must happen without skipping.
+
+**Example**: Critical data collection that must not miss any scheduled runs.
+
+### replace
+
+Stop the current execution and immediately start the new one.
+
+**Best for**: Tasks where only the latest data matters.
+
+**Example**: Real-time price monitoring where older data is irrelevant.
+
+## Managing Tasks
+
+### List All Tasks
+
+```bash tab="cURL"
+curl -X GET "https://api.anycrawl.dev/v1/scheduled-tasks" \
+  -H "Authorization: Bearer <your-api-key>"
+```
+
+```javascript tab="JavaScript"
+const response = await fetch("https://api.anycrawl.dev/v1/scheduled-tasks", {
+  headers: {
+    "Authorization": "Bearer YOUR_API_KEY"
+  }
+});
+
+const data = await response.json();
+console.log("Tasks:", data.data);
+```
+
+### Response
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "uuid": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "Daily Tech News",
+      "task_type": "scrape",
+      "cron_expression": "0 9 * * *",
+      "timezone": "Asia/Shanghai",
+      "is_active": true,
+      "is_paused": false,
+      "next_execution_at": "2026-01-28T01:00:00.000Z",
+      "total_executions": 45,
+      "successful_executions": 43,
+      "failed_executions": 2,
+      "consecutive_failures": 0,
+      "last_execution_at": "2026-01-27T01:00:00.000Z",
+      "created_at": "2026-01-01T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+### Pause a Task
+
+Pause a task to temporarily stop its execution. The `reason` parameter will be stored as `pause_reason` in the task record.
+
+```bash tab="cURL"
+curl -X PATCH "https://api.anycrawl.dev/v1/scheduled-tasks/:taskId/pause" \
+  -H "Authorization: Bearer <your-api-key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reason": "Maintenance period"
+  }'
+```
+
+```javascript tab="JavaScript"
+await fetch(`https://api.anycrawl.dev/v1/scheduled-tasks/${taskId}/pause`, {
+  method: "PATCH",
+  headers: {
+    "Authorization": "Bearer YOUR_API_KEY",
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    reason: "Maintenance period"
+  })
+});
+```
+
+### Response
+
+```json
+{
+  "success": true,
+  "message": "Task paused successfully",
+  "data": {
+    "uuid": "550e8400-e29b-41d4-a716-446655440000",
+    "is_paused": true,
+    "pause_reason": "Maintenance period"
+  }
+}
+```
+
+### Resume a Task
+
+```bash tab="cURL"
+curl -X PATCH "https://api.anycrawl.dev/v1/scheduled-tasks/:taskId/resume" \
+  -H "Authorization: Bearer <your-api-key>"
+```
+
+### Update a Task
+
+```bash tab="cURL"
+curl -X PUT "https://api.anycrawl.dev/v1/scheduled-tasks/:taskId" \
+  -H "Authorization: Bearer <your-api-key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cron_expression": "0 10 * * *",
+    "description": "Updated description"
+  }'
+```
+
+<Callout type="info">
+Only include fields you want to update. All other fields will remain unchanged.
+</Callout>
+
+### Delete a Task
+
+```bash tab="cURL"
+curl -X DELETE "https://api.anycrawl.dev/v1/scheduled-tasks/:taskId" \
+  -H "Authorization: Bearer <your-api-key>"
+```
+
+<Callout type="warn">
+Deleting a task also deletes all its execution history.
+</Callout>
+
+## Execution History
+
+### Get Executions
+
+```bash tab="cURL"
+curl -X GET "https://api.anycrawl.dev/v1/scheduled-tasks/:taskId/executions?limit=20" \
+  -H "Authorization: Bearer <your-api-key>"
+```
+
+### Response
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "uuid": "exec-uuid-1",
+      "scheduled_task_uuid": "task-uuid",
+      "execution_number": 45,
+      "status": "completed",
+      "started_at": "2026-01-27T01:00:00.000Z",
+      "completed_at": "2026-01-27T01:02:15.000Z",
+      "duration_ms": 135000,
+      "job_uuid": "job-uuid-1",
+      "credits_used": 5,
+      "items_processed": 1,
+      "items_succeeded": 1,
+      "items_failed": 0
+    }
+  ]
+}
+```
+
+## Automatic Failure Handling
+
+### Auto-Pause on Consecutive Failures
+
+Tasks are automatically paused after **5 consecutive failures** to prevent resource waste and excessive API calls.
+
+**Resume**: Manually resume the task after fixing the underlying issue.
+
+```bash
+curl -X PATCH "https://api.anycrawl.dev/v1/scheduled-tasks/:taskId/resume" \
+  -H "Authorization: Bearer <your-api-key>"
+```
+
+### Monitoring Failures
+
+Track failures using the `consecutive_failures` field in the task status:
+
+```json
+{
+  "consecutive_failures": 3,
+  "failed_executions": 5,
+  "successful_executions": 40
+}
+```
+
+<Callout type="warn">
+Monitor the `consecutive_failures` field. High values indicate recurring issues that need attention.
+</Callout>
+
+## Integration with Webhooks
+
+Subscribe to task events using webhooks:
+
+```bash
+curl -X POST "https://api.anycrawl.dev/v1/webhooks" \
+  -H "Authorization: Bearer <your-api-key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Task Notifications",
+    "webhook_url": "https://your-domain.com/webhook",
+    "event_types": ["task.executed", "task.failed", "task.paused"],
+    "scope": "all"
+  }'
+```
+
+See [Webhooks](/general/webhooks) for more details.
+
+## Common Use Cases
+
+### Price Monitoring
+
+Monitor product prices every hour:
+
+```json
+{
+  "name": "Hourly Price Tracker",
+  "cron_expression": "0 * * * *",
+  "task_type": "scrape",
+  "task_payload": {
+    "url": "https://shop.example.com/product/12345",
+    "engine": "cheerio",
+    "formats": ["markdown"]
+  },
+  "concurrency_mode": "skip"
+}
+```
+
+### Weekly Documentation Backup
+
+Crawl and archive documentation weekly:
+
+```json
+{
+  "name": "Weekly Docs Backup",
+  "cron_expression": "0 3 * * 0",
+  "timezone": "UTC",
+  "task_type": "crawl",
+  "task_payload": {
+    "url": "https://docs.example.com",
+    "engine": "playwright",
+    "options": {
+      "max_depth": 10,
+      "limit": 500
+    }
+  },
+  "max_executions_per_day": 1
+}
+```
+
+### Daily News Aggregation
+
+Scrape multiple news sources daily:
+
+```json
+{
+  "name": "Morning News Digest",
+  "cron_expression": "0 6 * * *",
+  "timezone": "America/New_York",
+  "task_type": "scrape",
+  "task_payload": {
+    "url": "https://news.example.com",
+    "engine": "cheerio",
+    "formats": ["markdown"]
+  },
+  "max_executions_per_day": 1
+}
+```
+
+### Competitive Intelligence
+
+Track competitor mentions and industry trends hourly:
+
+```json
+{
+  "name": "Competitor Monitoring",
+  "cron_expression": "0 * * * *",
+  "task_type": "search",
+  "task_payload": {
+    "query": "YourCompany OR CompetitorA OR CompetitorB",
+    "engine": "google",
+    "limit": 50,
+    "time_range": "hour"
+  },
+  "concurrency_mode": "skip"
+}
+```
+
+## Best Practices
+
+### 1. Choose Appropriate Cron Intervals
+
+- Avoid overly frequent schedules (< 1 minute) to prevent rate limiting
+- Consider website update frequency when setting intervals
+- Use timezone settings for location-specific timing
+
+### 2. Set Concurrency Mode Correctly
+
+- Use `"skip"` for most tasks to avoid overlapping executions
+- Use `"queue"` only when every execution is critical
+- Use `"replace"` sparingly, only for real-time data needs
+
+### 3. Manage Credits Wisely
+
+- Set `min_credits_required` based on typical job costs
+- Enable `auto_pause_on_low_credits` to prevent unexpected charges
+- Monitor credit usage in execution history
+
+### 4. Monitor Task Health
+
+- Check `consecutive_failures` regularly
+- Review execution history for patterns
+- Set up webhook notifications for failures
+
+### 5. Use Descriptive Names and Tags
+
+- Use clear, descriptive task names
+- Add tags for easy filtering and organization
+- Include relevant metadata for tracking
+
+## Limitations
+
+| Item | Limit |
+|------|-------|
+| Task name length | 1-255 characters |
+| Minimum interval | 1 minute |
+| Maximum concurrent executions | 1-50 |
+| Task payload size | 100KB |
+| Cron expression format | Standard 5-field format |
+
+## Troubleshooting
+
+### Task Not Executing
+
+**Check**:
+- Is the task active? (`is_active: true`)
+- Is the task paused? (`is_paused: false`)
+- Is the cron expression valid?
+- Are there sufficient credits?
+
+### High Failure Rate
+
+**Possible causes**:
+- Target website blocking requests
+- Invalid URLs in task payload
+- Insufficient timeout values
+- Network connectivity issues
+
+**Solutions**:
+- Add delays with `wait_for` parameter
+- Use different engines (try Playwright for dynamic sites)
+- Increase timeout values
+- Check execution history for error messages
+
+### Credits Depleting Too Fast
+
+**Solutions**:
+- Reduce execution frequency
+- Set `max_executions_per_day` limits
+- Use `min_credits_required` threshold
+- Enable `auto_pause_on_low_credits`
+
+## Related Documentation
+
+- [Webhooks](/general/webhooks) - Event notifications for scheduled tasks
+- [Scrape API](/general/scrape) - Scraping task configuration
+- [Crawl API](/general/crawl) - Crawling task configuration

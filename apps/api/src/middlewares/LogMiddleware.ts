@@ -36,6 +36,7 @@ export const logMiddleware = async (req: RequestWithAuth, res: Response, next: N
         }
         const logEntry = {
             apiKey: req.auth?.uuid || null,
+            userId: req.auth?.user || null,
             path: req.originalUrl,
             method: req.method,
             statusCode: res.statusCode,

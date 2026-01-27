@@ -23,6 +23,7 @@
         "@anycrawl/template-client": "workspace:*",
         "body-parser": "^2.2.0",
         "cors": "^2.8.5",
+        "cron-parser": "^5.5.0",
         "express": "^5.1.0",
         "minimatch": "^10.0.3",
         "morgan": "^1.10.0",
