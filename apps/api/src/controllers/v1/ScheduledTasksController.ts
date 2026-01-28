@@ -11,7 +11,7 @@ import { serializeRecord, serializeRecords } from "../../utils/serializer.js";
 // Validation schemas
 const createTaskSchema = z.object({
     name: z.string().min(1).max(255),
-    description: z.string().optional(),
+    description: z.string().nullable().optional(),
     cron_expression: z.string().refine(
         (val) => {
             try {
@@ -28,7 +28,7 @@ const createTaskSchema = z.object({
     task_payload: z.object({}).passthrough(),
     concurrency_mode: z.enum(["skip", "queue", "replace"]).default("skip"),
     max_concurrent_executions: z.number().int().min(1).default(1),
-    max_executions_per_day: z.number().int().positive().optional(),
+    max_executions_per_day: z.number().int().positive().nullable().optional(),
     min_credits_required: z.number().int().min(0).default(100),
     auto_pause_on_low_credits: z.boolean().default(true),
     tags: z.array(z.string()).optional(),
