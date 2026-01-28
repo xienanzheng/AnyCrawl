@@ -43,6 +43,20 @@
       "when": 1769408533680,
       "tag": "0005_black_bastion",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1769512666163,
+      "tag": "0006_breezy_proteus",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1769525738710,
+      "tag": "0007_pale_sasquatch",
+      "breakpoints": true
     }
   ]
 }

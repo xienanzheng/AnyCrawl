@@ -29,3 +29,55 @@ OpenAPI friendly.
 </Card>
 
 </Cards>
+
+## API Conventions
+
+### Parameter Naming
+
+AnyCrawl API follows consistent naming conventions:
+
+- **Request Parameters**: Use `snake_case` format
+  - Example: `webhook_url`, `event_types`, `cron_expression`, `max_retries`
+
+- **Response Fields**: Use `snake_case` format
+  - Example: `task_id`, `webhook_id`, `next_execution_at`, `task_type`, `cron_expression`, `is_active`
+
+All API endpoints consistently use `snake_case` for both request parameters and response fields, making it easy to work with the API across different programming languages.
+
+### Response Format
+
+All API responses follow a standard structure:
+
+```json
+{
+  "success": true,
+  "data": { ... },
+  "message": "Optional message"
+}
+```
+
+- `success`: Boolean indicating if the request was successful
+- `data`: The response payload (object or array)
+- `message`: Optional human-readable message
+
+### Error Responses
+
+Error responses include detailed information:
+
+```json
+{
+  "success": false,
+  "error": "Error type",
+  "message": "Human-readable error message",
+  "details": { ... }
+}
+```
+
+Common HTTP status codes:
+- `200` - Success
+- `400` - Bad Request (validation errors)
+- `401` - Unauthorized (invalid API key)
+- `402` - Payment Required (insufficient credits)
+- `404` - Not Found
+- `429` - Too Many Requests (rate limit exceeded)
+- `500` - Internal Server Error

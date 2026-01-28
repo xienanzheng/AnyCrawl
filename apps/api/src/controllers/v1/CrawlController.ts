@@ -257,7 +257,7 @@ export class CrawlController {
                 status: job.status,
                 total: job.total ?? total,
                 completed: job.completed ?? 0,
-                creditsUsed: job.creditsUsed ?? 0,
+                credits_used: job.creditsUsed ?? 0,
                 next: nextUrl,
                 data: dataWithPrefixedScreenshots,
             });
