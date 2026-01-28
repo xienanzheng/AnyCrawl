@@ -5,7 +5,7 @@ import { RequestWithAuth, WEBHOOK_EVENT_TYPES } from "@anycrawl/libs";
 import { getDB, schemas, eq, sql } from "@anycrawl/db";
 import { log } from "@anycrawl/libs";
 import { randomUUID } from "crypto";
-import { serializeRecord, serializeRecords } from "../../utils/serializer";
+import { serializeRecord, serializeRecords } from "../../utils/serializer.js";
 
 // Validation schemas
 const createWebhookSchema = z.object({

@@ -6,7 +6,7 @@ import { RequestWithAuth } from "@anycrawl/libs";
 import { getDB, schemas, eq, sql } from "@anycrawl/db";
 import { log } from "@anycrawl/libs";
 import { randomUUID } from "crypto";
-import { serializeRecord, serializeRecords } from "../../utils/serializer";
+import { serializeRecord, serializeRecords } from "../../utils/serializer.js";
 
 // Validation schemas
 const createTaskSchema = z.object({
