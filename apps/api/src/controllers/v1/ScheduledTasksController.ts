@@ -24,7 +24,7 @@ const createTaskSchema = z.object({
         "Invalid cron expression"
     ),
     timezone: z.string().default("UTC"),
-    task_type: z.enum(["scrape", "crawl", "search"]),
+    task_type: z.enum(["scrape", "crawl", "search", "template"]),
     task_payload: z.object({}).passthrough(),
     concurrency_mode: z.enum(["skip", "queue", "replace"]).default("skip"),
     max_concurrent_executions: z.number().int().min(1).default(1),

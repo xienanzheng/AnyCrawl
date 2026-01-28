@@ -311,11 +311,40 @@ export class SchedulerManager {
         const queueManager = QueueManager.getInstance();
         const payload = task.taskPayload;
 
-        // Determine engine from payload
-        const engine = payload.engine || "cheerio";
+        let actualTaskType = task.taskType;
+        let engine = payload.engine || "cheerio";
 
-        // Create queue name based on task type and engine
-        const queueName = `${task.taskType}-${engine}`;
+        // Handle template task type
+        if (task.taskType === "template") {
+            // For template tasks, we need to fetch the template to determine the actual type
+            const templateId = payload.template_id;
+            if (!templateId) {
+                throw new Error("Template task requires template_id in payload");
+            }
+
+            try {
+                const { getTemplate } = await import("@anycrawl/db");
+                const template = await getTemplate(templateId);
+
+                if (!template) {
+                    throw new Error(`Template ${templateId} not found`);
+                }
+
+                // Use the template's type as the actual task type
+                actualTaskType = template.templateType;
+
+                // If engine is not specified in payload, use template's engine if available
+                if (!payload.engine && template.reqOptions?.engine) {
+                    engine = template.reqOptions.engine;
+                }
+            } catch (error) {
+                log.error(`Failed to fetch template ${templateId}: ${error}`);
+                throw error;
+            }
+        }
+
+        // Create queue name based on actual task type and engine
+        const queueName = `${actualTaskType}-${engine}`;
 
         // Get or create the queue
         const queue = queueManager.getQueue(queueName);
@@ -325,10 +354,10 @@ export class SchedulerManager {
 
         // Add job to queue
         await queue.add(
-            task.taskType,
+            actualTaskType,
             {
                 ...payload,
-                type: task.taskType,
+                type: actualTaskType,
                 engine: engine,
                 scheduled_task_id: task.uuid,
                 scheduled_execution_id: executionUuid,
