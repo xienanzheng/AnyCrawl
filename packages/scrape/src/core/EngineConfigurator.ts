@@ -6,6 +6,7 @@ import { ProgressManager } from "../managers/Progress.js";
 import { JOB_TYPE_CRAWL } from "@anycrawl/libs";
 import { CrawlLimitReachedError } from "../errors/index.js";
 import { getOrCreateBandwidthTracker } from "./BandwidthTracker.js";
+import { CDPTurnstileSolver, CloudflareSolver } from "../solvers/index.js";
 
 export enum ConfigurableEngineType {
     CHEERIO = 'cheerio',
@@ -273,6 +274,41 @@ export class EngineConfigurator {
             }
         };
 
+        // Cloudflare Turnstile solver hook (pre-navigation - sets up CDP-based solver)
+        const cloudflareSolverHook = async ({ page, request }: any) => {
+            try {
+                // Get API key from environment - if present, captcha solving is enabled
+                const apiKey = process.env.CAPTCHA_SOLVER_API_KEY || process.env.TWOCAPTCHA_API_KEY;
+
+                if (!apiKey) {
+                    return;
+                }
+
+                // Skip if already set up
+                if ((page as any).__cdpSolverSetup) {
+                    return;
+                }
+                (page as any).__cdpSolverSetup = true;
+
+                // Create and setup CDP-based solver with script blocking enabled
+                const cdpSolver = new CDPTurnstileSolver({
+                    apiKey,
+                    blockChallengeScripts: true  // Enable blocking of CF scripts until proxy is ready
+                });
+                await cdpSolver.setup(page);
+
+                // Store solver on page for access by 403 handler
+                (page as any).__cdpTurnstileSolver = cdpSolver;
+                (page as any).__captchaSolverEnabled = true;
+                (page as any).__captchaSolverApiKey = apiKey;
+
+                log.debug(`[CloudflareSolverHook] CDP Turnstile solver enabled with script blocking for ${request.url}`);
+
+            } catch (error) {
+                log.error(`[CloudflareSolverHook] Error setting up Turnstile solver: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        };
+
         // Pre-navigation capture hook for preNav rules
         const preNavHook = async ({ page, request }: any) => {
             try {
@@ -474,9 +510,399 @@ export class EngineConfigurator {
 
         // Add browser-specific hooks to preNavigationHooks
         const existingHooks = options.preNavigationHooks || [];
-        options.preNavigationHooks = [viewportHook, bandwidthHook, adBlockingHook, requestTimeoutHook, authenticationHook, preNavHook, ...existingHooks];
+        options.preNavigationHooks = [viewportHook, bandwidthHook, adBlockingHook, requestTimeoutHook, authenticationHook, cloudflareSolverHook, preNavHook, ...existingHooks];
 
-        log.info(`[EngineConfigurator] Browser-specific hooks configured for ${engineType}: total=${options.preNavigationHooks.length}, hooks=[viewport, bandwidth, adBlocking, requestTimeout, authentication, preNav], existingHooks=${existingHooks.length}`);
+        log.info(`[EngineConfigurator] Browser-specific hooks configured for ${engineType}: total=${options.preNavigationHooks.length}, hooks=[viewport, bandwidth, adBlocking, requestTimeout, authentication, cloudflareSolver, preNav], existingHooks=${existingHooks.length}`);
+
+        // Post-navigation hook for Cloudflare Turnstile - wait for solve completion
+        const cloudflareSolverPostHook = async ({ page, response, request }: any) => {
+            try {
+                // Check if captcha solving is enabled for this page
+                if (!(page as any).__captchaSolverEnabled) {
+                    return;
+                }
+
+                // Check response status
+                let statusCode = 0;
+                try {
+                    statusCode = typeof response?.status === 'function' ? response.status() : (response?.status || 0);
+                } catch { }
+
+                // Check HTML for Cloudflare challenge characteristics
+                const challengeInfo = await page.evaluate(() => {
+                    const html = document.documentElement.outerHTML;
+                    const title = document.title || '';
+
+                    const isCloudflareChallenge =
+                        title.includes('Just a moment') ||
+                        title.includes('Checking your browser') ||
+                        title.includes('Please wait') ||
+                        html.includes('cf-turnstile') ||
+                        html.includes('challenge-platform') ||
+                        html.includes('challenge-running') ||
+                        html.includes('challenge-stage') ||
+                        html.includes('cf-chl-widget') ||
+                        html.includes('challenges.cloudflare.com');
+
+                    return { isCloudflareChallenge, title };
+                }).catch(() => ({ isCloudflareChallenge: false, title: '' }));
+
+                if (!challengeInfo.isCloudflareChallenge) {
+                    log.debug('[CloudflareSolverPostHook] Not a Cloudflare challenge page, skipping');
+                    return;
+                }
+
+                log.info(`[CloudflareSolverPostHook] Cloudflare challenge detected (title: "${challengeInfo.title}", status: ${statusCode})`);
+
+                // Check if our script intercepted render (check for proxy or polling interception)
+                const intercepted = await page.evaluate(() => {
+                    return (window as any).__turnstileSolving ||
+                           (window as any).__turnstileSolved ||
+                           (window as any).__turnstileReady ||  // Proxy script is ready
+                           typeof (window as any).cfCallback === 'function';
+                }).catch(() => false);
+
+                if (intercepted) {
+                    log.info('[CloudflareSolverPostHook] Render intercepted by proxy/polling script, waiting for solve...');
+                } else {
+                    // Render not intercepted - try to reload page to trigger our proxy
+                    log.info('[CloudflareSolverPostHook] Render not intercepted, attempting page reload to trigger proxy...');
+
+                    // Get navigation options from solver or use request-level config
+                    const cdpSolver = (page as any).__cdpTurnstileSolver as CDPTurnstileSolver | undefined;
+                    const navOptions = cdpSolver?.getNavigationOptions() || {
+                        timeout: request.userData?.options?.timeout || parseInt(process.env.ANYCRAWL_NAV_TIMEOUT || '30000', 10),
+                        waitUntil: request.userData?.options?.wait_until || process.env.ANYCRAWL_NAV_WAIT_UNTIL || 'domcontentloaded',
+                    };
+
+                    try {
+                        // Reload the page - our addInitScript/evaluateOnNewDocument will run before CF scripts
+                        await page.reload(navOptions);
+
+                        // Check again after reload
+                        const interceptedAfterReload = await page.evaluate(() => {
+                            return (window as any).__turnstileSolving ||
+                                   (window as any).__turnstileSolved ||
+                                   (window as any).__turnstileReady ||
+                                   typeof (window as any).cfCallback === 'function';
+                        }).catch(() => false);
+
+                        if (interceptedAfterReload) {
+                            log.info('[CloudflareSolverPostHook] Proxy active after reload, waiting for solve...');
+                        } else {
+                            // Still not intercepted - use fallback extraction from _cf_chl_opt
+                            log.info('[CloudflareSolverPostHook] Proxy still not active, using fallback extraction...');
+                        }
+                    } catch (reloadError) {
+                        log.warning(`[CloudflareSolverPostHook] Reload failed: ${reloadError}`);
+                    }
+
+                    // Extract params from _cf_chl_opt
+                    const extractedParams = await page.evaluate(() => {
+                        const cfOpt = (window as any)._cf_chl_opt;
+                        if (cfOpt && cfOpt.cTurnstileSitekey) {
+                            return {
+                                sitekey: cfOpt.cTurnstileSitekey,
+                                pageurl: window.location.href,
+                                data: cfOpt.cData,
+                                pagedata: cfOpt.chlPageData,
+                                action: cfOpt.chlAction || 'managed',
+                            };
+                        }
+                        return null;
+                    }).catch(() => null);
+
+                    if (extractedParams && extractedParams.sitekey) {
+                        log.info(`[CloudflareSolverPostHook] Extracted sitekey: ${extractedParams.sitekey.substring(0, 20)}...`);
+
+                        const apiKey = (page as any).__captchaSolverApiKey;
+                        const solver = new CloudflareSolver({ apiKey });
+
+                        try {
+                            log.info('[CloudflareSolverPostHook] Calling 2captcha API...');
+                            const result = await solver.solveTurnstile(extractedParams);
+
+                            if (result.success && result.token) {
+                                log.info('[CloudflareSolverPostHook] Solved! Injecting token...');
+
+                                // For Cloudflare challenge pages, we need to call the turnstile callback
+                                // The callback is stored when turnstile.render() is called
+                                const injected = await page.evaluate((token: string) => {
+                                    // Method 1: Try turnstile.getResponse to find the widget and callback
+                                    if ((window as any).turnstile) {
+                                        // Find all turnstile containers
+                                        const containers = document.querySelectorAll('.cf-turnstile, [data-sitekey]');
+                                        for (const container of containers) {
+                                            // Try to get widget ID
+                                            const widgetId = container.querySelector('iframe')?.getAttribute('id')?.replace('cf-chl-widget-', '');
+                                            if (widgetId) {
+                                                try {
+                                                    // Cloudflare stores callbacks internally
+                                                    // We can try to trigger success by calling the internal callback
+                                                    const turnstile = (window as any).turnstile;
+                                                    if (turnstile._callbacks && turnstile._callbacks[widgetId]) {
+                                                        turnstile._callbacks[widgetId](token);
+                                                        return 'turnstile-callback';
+                                                    }
+                                                } catch {}
+                                            }
+                                        }
+                                    }
+
+                                    // Method 2: Find and fill the hidden input, then submit
+                                    const inputs = [
+                                        document.querySelector('input[name="cf-turnstile-response"]'),
+                                        document.querySelector('textarea[name="cf-turnstile-response"]'),
+                                        document.querySelector('input[name="g-recaptcha-response"]'),
+                                        document.querySelector('textarea[name="g-recaptcha-response"]'),
+                                    ].filter(Boolean);
+
+                                    for (const input of inputs) {
+                                        if (input) {
+                                            (input as HTMLInputElement).value = token;
+                                        }
+                                    }
+
+                                    // Find challenge form and submit
+                                    const form = document.querySelector('form#challenge-form') ||
+                                        document.querySelector('form[action*="challenge"]') ||
+                                        document.querySelector('form');
+
+                                    if (form && inputs.length > 0) {
+                                        (form as HTMLFormElement).submit();
+                                        return 'form-submit';
+                                    }
+
+                                    // Method 3: Try _cf_chl_opt callback
+                                    const cfOpt = (window as any)._cf_chl_opt;
+                                    if (cfOpt) {
+                                        // Try various callback names
+                                        const callbackNames = [
+                                            cfOpt.chlCallback,
+                                            cfOpt.onSuccess,
+                                            'tsCallback',
+                                            'onTurnstileSuccess',
+                                        ].filter(Boolean);
+
+                                        for (const name of callbackNames) {
+                                            if (typeof (window as any)[name] === 'function') {
+                                                (window as any)[name](token);
+                                                return 'cf-callback-' + name;
+                                            }
+                                        }
+                                    }
+
+                                    return 'no-method';
+                                }, result.token);
+
+                                log.info(`[CloudflareSolverPostHook] Injection result: ${injected}`);
+
+                                if (injected !== 'no-method') {
+                                    (page as any).__captchaSolved = true;
+                                    // Wait for navigation using configured options
+                                    try {
+                                        await page.waitForNavigation(navOptions);
+                                        log.info('[CloudflareSolverPostHook] Navigation completed after token injection');
+                                    } catch {
+                                        log.debug('[CloudflareSolverPostHook] No navigation after injection');
+                                    }
+                                    return;
+                                } else {
+                                    log.warning('[CloudflareSolverPostHook] Could not find injection method');
+                                }
+                            }
+                        } catch (e) {
+                            log.error(`[CloudflareSolverPostHook] Fallback solve failed: ${e}`);
+                        }
+                    } else {
+                        log.warning('[CloudflareSolverPostHook] Could not extract params from _cf_chl_opt');
+                    }
+                }
+
+                // IMPORTANT: Wait for Turnstile to load and be intercepted by console listener
+                // The console listener will start solving automatically when it intercepts params
+                log.info('[CloudflareSolverPostHook] Waiting for Turnstile to load and be solved...');
+
+                const maxWaitTime = 120000; // 2 minutes max wait
+                const waitStart = Date.now();
+
+                while (Date.now() - waitStart < maxWaitTime) {
+                    // Check if CDPTurnstileSolver already solved it
+                    const cdpSolver = (page as any).__cdpTurnstileSolver as CDPTurnstileSolver | undefined;
+                    if (cdpSolver?.isSolved()) {
+                        log.info('[CloudflareSolverPostHook] CDPTurnstileSolver reports solved, done!');
+                        return;
+                    }
+
+                    // Check if already solved - navigation was already handled in the pre-nav hook
+                    if ((page as any).__captchaSolved) {
+                        log.info('[CloudflareSolverPostHook] Captcha was already solved in pre-nav hook, continuing...');
+                        return;
+                    }
+
+                    // Check page state - if solved or no longer on challenge page
+                    const pageState = await page.evaluate(() => {
+                        const title = document.title || '';
+                        return {
+                            solved: (window as any).__turnstileSolved,
+                            solving: (window as any).__turnstileSolving,
+                            isChallengePage: title.includes('Just a moment') || title.includes('Checking') || title.includes('Please wait'),
+                            title,
+                        };
+                    }).catch(() => ({ solved: false, solving: false, isChallengePage: true, title: '' }));
+
+                    if (pageState.solved) {
+                        log.info('[CloudflareSolverPostHook] Page reports __turnstileSolved=true, done!');
+                        return;
+                    }
+
+                    // If no longer on challenge page, we're done
+                    if (!pageState.isChallengePage) {
+                        log.info(`[CloudflareSolverPostHook] No longer on challenge page (title: "${pageState.title}"), done!`);
+                        return;
+                    }
+
+                    // Check if solving is in progress - wait for it
+                    if (pageState.solving || cdpSolver?.isSolving()) {
+                        log.debug('[CloudflareSolverPostHook] Captcha solving in progress, waiting...');
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        continue;
+                    }
+
+                    // Check if params were intercepted but solving hasn't started yet
+                    if ((page as any).__interceptedParams) {
+                        log.debug('[CloudflareSolverPostHook] Params intercepted, waiting for solve to start...');
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        continue;
+                    }
+
+                    // Try to extract params from page if console listener hasn't intercepted them
+                    const extractedParams = await page.evaluate(() => {
+                        // Method 1: From window._cf_chl_opt (Cloudflare challenge options - most reliable)
+                        const cfOpt = (window as any)._cf_chl_opt;
+                        if (cfOpt && cfOpt.cTurnstileSitekey) {
+                            return {
+                                sitekey: cfOpt.cTurnstileSitekey,
+                                pageurl: window.location.href,
+                                data: cfOpt.cData,
+                                pagedata: cfOpt.chlPageData,
+                                action: cfOpt.chlAction || 'managed',
+                            };
+                        }
+
+                        // Method 2: From data-sitekey attribute
+                        const turnstileEl = document.querySelector('[data-sitekey]');
+                        if (turnstileEl) {
+                            const sitekey = turnstileEl.getAttribute('data-sitekey');
+                            if (sitekey) {
+                                return {
+                                    sitekey,
+                                    pageurl: window.location.href,
+                                };
+                            }
+                        }
+
+                        return null;
+                    }).catch(() => null);
+
+                    if (extractedParams && extractedParams.sitekey) {
+                        // We found params but console listener didn't intercept them
+                        // This means Turnstile loaded but our inject script didn't catch it
+                        // Start solving manually
+                        log.info(`[CloudflareSolverPostHook] Extracted params from page: sitekey=${extractedParams.sitekey}`);
+
+                        const apiKey = (page as any).__captchaSolverApiKey;
+                        const solver = new CloudflareSolver({ apiKey });
+
+                        (page as any).__captchaSolving = true;
+                        try {
+                            log.info('[CloudflareSolverPostHook] Solving Turnstile challenge...');
+                            const result = await solver.solveTurnstile(extractedParams);
+
+                            if (result.success && result.token) {
+                                log.info('[CloudflareSolverPostHook] Turnstile solved, injecting token...');
+
+                                const injected = await page.evaluate((token: string) => {
+                                    if (typeof (window as any).cfCallback === 'function') {
+                                        console.log('[CloudflareSolver] Executing cfCallback with token');
+                                        (window as any).cfCallback(token);
+                                        return 'cfCallback';
+                                    }
+
+                                    const form = document.querySelector('form[action*="challenge"]') ||
+                                        document.querySelector('form#challenge-form') ||
+                                        document.querySelector('form');
+
+                                    const responseInput = document.querySelector('input[name="cf-turnstile-response"]') ||
+                                        document.querySelector('textarea[name="cf-turnstile-response"]') ||
+                                        document.querySelector('input[name="g-recaptcha-response"]') ||
+                                        document.querySelector('textarea[name="g-recaptcha-response"]');
+
+                                    if (responseInput) {
+                                        (responseInput as HTMLInputElement).value = token;
+                                        if (form) {
+                                            (form as HTMLFormElement).submit();
+                                            return 'form-submit';
+                                        }
+                                        return 'input-only';
+                                    }
+
+                                    return null;
+                                }, result.token);
+
+                                if (injected) {
+                                    log.info(`[CloudflareSolverPostHook] Token injected via: ${injected}`);
+                                    (page as any).__captchaSolved = true;
+
+                                    // Get navigation options from solver or use request-level config
+                                    const cdpSolverForNav = (page as any).__cdpTurnstileSolver as CDPTurnstileSolver | undefined;
+                                    const navOptionsForWait = cdpSolverForNav?.getNavigationOptions() || {
+                                        timeout: request.userData?.options?.timeout || parseInt(process.env.ANYCRAWL_NAV_TIMEOUT || '30000', 10),
+                                        waitUntil: request.userData?.options?.wait_until || process.env.ANYCRAWL_NAV_WAIT_UNTIL || 'domcontentloaded',
+                                    };
+
+                                    await page.waitForNavigation(navOptionsForWait).catch(() => {
+                                        log.debug('[CloudflareSolverPostHook] No navigation after token injection');
+                                    });
+
+                                    log.info('[CloudflareSolverPostHook] Cloudflare challenge solved successfully');
+                                    return;
+                                } else {
+                                    log.warning('[CloudflareSolverPostHook] Could not find element to inject token');
+                                }
+                            } else {
+                                log.error(`[CloudflareSolverPostHook] Failed to solve Turnstile: ${result.error}`);
+                            }
+                        } finally {
+                            (page as any).__captchaSolving = false;
+                        }
+                        return;
+                    }
+
+                    // Wait a bit before checking again
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+
+                log.warning('[CloudflareSolverPostHook] Timeout waiting for Turnstile to load/solve');
+
+                // Clean up console handler
+                try {
+                    const handler = (page as any).__captchaConsoleHandler;
+                    if (handler) {
+                        page.off('console', handler);
+                    }
+                } catch { }
+
+            } catch (error) {
+                log.error(`[CloudflareSolverPostHook] Error: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        };
+
+        // Add post-navigation hooks
+        const existingPostHooks = options.postNavigationHooks || [];
+        options.postNavigationHooks = [cloudflareSolverPostHook, ...existingPostHooks];
+
+        log.info(`[EngineConfigurator] Post-navigation hooks configured for ${engineType}: total=${options.postNavigationHooks.length}`);
 
         // Apply headless configuration from environment
         if (options.headless === undefined) {
@@ -489,13 +915,16 @@ export class EngineConfigurator {
         options.maxRequestRetries = 3;
         options.maxSessionRotations = 3; // Enable session rotation
 
+        // Check if captcha solving is enabled
+        const captchaSolverEnabled = !!(process.env.CAPTCHA_SOLVER_API_KEY || process.env.TWOCAPTCHA_API_KEY);
+
         // Configure session pool with specific settings
         if (options.useSessionPool !== false) {
             options.sessionPoolOptions = {
                 ...options.sessionPoolOptions,
-                // Specify which status codes should NOT trigger session rotation
-                // This allows us to capture these status codes while still rotating for other errors
-                blockedStatusCodes: [], // Only these codes will trigger rotation
+                // When captcha solver is enabled, don't treat 403 as blocked
+                // This allows the post-navigation hook to handle Cloudflare challenges
+                blockedStatusCodes: captchaSolverEnabled ? [401, 429, 500, 502, 503] : [],
                 // Configure session options to rotate after every error
                 sessionOptions: {
                     ...options.sessionPoolOptions?.sessionOptions,

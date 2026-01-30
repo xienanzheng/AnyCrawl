@@ -75,6 +75,7 @@
         "typescript": "5.8.2"
     },
     "dependencies": {
+        "@2captcha/captcha-solver": "^1.3.2",
         "@anycrawl/ai": "workspace:*",
         "@anycrawl/db": "workspace:*",
         "@anycrawl/libs": "workspace:*",

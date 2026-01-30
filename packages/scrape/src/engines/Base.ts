@@ -603,12 +603,150 @@ export abstract class BaseEngine {
                     const queueName = context.request.userData?.queueName || 'unknown';
 
                     try {
-                        // Wait 10 seconds before retrying to avoid overwhelming the server
-                        log.info(`[${queueName}] [${jobId}] 403 Forbidden detected, waiting 10 seconds before retry: ${context.request.url}`);
-                        await sleep(10000);
+                        // Check if CDP Turnstile solver is active on this page
+                        const cdpSolver = (page as any).__cdpTurnstileSolver;
 
-                        // Check if page is still open
-                        if (!(page.isClosed && page.isClosed())) {
+                        if (cdpSolver) {
+                            // Check if turnstile is detected or being solved
+                            const isDetected = await cdpSolver.checkDetected(page);
+                            const isSolving = cdpSolver.isSolving();
+                            const isSolved = cdpSolver.isSolved();
+
+                            if (isSolved) {
+                                log.info(`[${queueName}] [${jobId}] Turnstile already solved, waiting for navigation...`);
+
+                                // Wait for navigation to complete after token injection
+                                try {
+                                    await page.waitForNavigation({
+                                        waitUntil: 'domcontentloaded',
+                                        timeout: 10000
+                                    });
+                                    log.info(`[${queueName}] [${jobId}] Navigation completed after solve`);
+                                } catch (navError) {
+                                    log.debug(`[${queueName}] [${jobId}] Navigation wait error (may have already navigated): ${navError}`);
+                                }
+
+                                // Wait a bit for page to stabilize
+                                await sleep(2000);
+
+                                // Check page status
+                                try {
+                                    const newStatus = await page.evaluate(() => {
+                                        return {
+                                            title: document.title,
+                                            url: window.location.href,
+                                            bodyLength: document.body?.innerHTML?.length || 0,
+                                        };
+                                    });
+                                    log.info(`[${queueName}] [${jobId}] Page after solve: title="${newStatus.title}", url=${newStatus.url}, bodyLength=${newStatus.bodyLength}`);
+
+                                    // Check if we're no longer on a challenge page
+                                    const isStillChallenge = newStatus.title.includes('Just a moment') ||
+                                        newStatus.title.includes('Checking') ||
+                                        newStatus.title.includes('Please wait');
+
+                                    // If title is not a challenge page title, consider it bypassed
+                                    // Don't require bodyLength > 1000 as page may still be loading
+                                    if (!isStillChallenge) {
+                                        log.info(`[${queueName}] [${jobId}] Challenge bypassed successfully! Waiting for page to fully load...`);
+                                        // Mark that we've bypassed the challenge - don't treat as 403 error
+                                        (context as any).__challengeBypassed = true;
+
+                                        // Wait for page to fully load using configured navigation options
+                                        const navTimeout = context.request.userData?.options?.timeout || parseInt(process.env.ANYCRAWL_NAV_TIMEOUT || '30000', 10);
+                                        const navWaitUntil = context.request.userData?.options?.wait_until || process.env.ANYCRAWL_NAV_WAIT_UNTIL || 'domcontentloaded';
+                                        try {
+                                            await page.waitForLoadState(navWaitUntil, { timeout: navTimeout });
+                                            log.info(`[${queueName}] [${jobId}] Page fully loaded after challenge bypass`);
+                                        } catch (loadError) {
+                                            log.debug(`[${queueName}] [${jobId}] waitForLoadState error (page may already be loaded): ${loadError}`);
+                                        }
+                                    }
+                                } catch (e) {
+                                    log.debug(`[${queueName}] [${jobId}] Could not check page status after solve: ${e}`);
+                                    // Assume bypassed if we can't check (page may have navigated)
+                                    (context as any).__challengeBypassed = true;
+                                }
+                            } else if (isDetected || isSolving) {
+                                log.info(`[${queueName}] [${jobId}] Turnstile detected/solving, waiting for solve to complete: ${context.request.url}`);
+
+                                // Wait for solve to complete (up to 180 seconds)
+                                const solved = await cdpSolver.waitForSolve(page, 180000);
+
+                                if (solved) {
+                                    log.info(`[${queueName}] [${jobId}] Turnstile solved successfully, waiting for page navigation...`);
+
+                                    // Wait for navigation to complete after token injection
+                                    try {
+                                        await page.waitForNavigation({
+                                            waitUntil: 'domcontentloaded',
+                                            timeout: 30000
+                                        });
+                                        log.info(`[${queueName}] [${jobId}] Navigation completed after solve`);
+                                    } catch (navError) {
+                                        log.debug(`[${queueName}] [${jobId}] Navigation wait error (may have already navigated): ${navError}`);
+                                    }
+
+                                    // Wait a bit more for page to stabilize
+                                    await sleep(2000);
+
+                                    // Check page status
+                                    try {
+                                        const newStatus = await page.evaluate(() => {
+                                            return {
+                                                title: document.title,
+                                                url: window.location.href,
+                                                bodyLength: document.body?.innerHTML?.length || 0,
+                                            };
+                                        });
+                                        log.info(`[${queueName}] [${jobId}] Page after solve: title="${newStatus.title}", url=${newStatus.url}, bodyLength=${newStatus.bodyLength}`);
+
+                                        // Check if we're no longer on a challenge page
+                                        const isStillChallenge = newStatus.title.includes('Just a moment') ||
+                                            newStatus.title.includes('Checking') ||
+                                            newStatus.title.includes('Please wait');
+
+                                        // If title is not a challenge page title, consider it bypassed
+                                        // Don't require bodyLength > 1000 as page may still be loading
+                                        if (!isStillChallenge) {
+                                            log.info(`[${queueName}] [${jobId}] Challenge bypassed successfully! Waiting for page to fully load...`);
+                                            // Mark that we've bypassed the challenge - don't treat as 403 error
+                                            (context as any).__challengeBypassed = true;
+
+                                            // Wait for page to fully load using configured navigation options
+                                            const navTimeout = context.request.userData?.options?.timeout || parseInt(process.env.ANYCRAWL_NAV_TIMEOUT || '30000', 10);
+                                            const navWaitUntil = context.request.userData?.options?.wait_until || process.env.ANYCRAWL_NAV_WAIT_UNTIL || 'domcontentloaded';
+                                            try {
+                                                await page.waitForLoadState(navWaitUntil, { timeout: navTimeout });
+                                                log.info(`[${queueName}] [${jobId}] Page fully loaded after challenge bypass`);
+                                            } catch (loadError) {
+                                                log.debug(`[${queueName}] [${jobId}] waitForLoadState error (page may already be loaded): ${loadError}`);
+                                            }
+                                        } else {
+                                            log.warning(`[${queueName}] [${jobId}] Still on challenge page after solve, will retry`);
+                                        }
+                                    } catch (e) {
+                                        log.debug(`[${queueName}] [${jobId}] Could not check page status after solve: ${e}`);
+                                    }
+                                } else {
+                                    log.warning(`[${queueName}] [${jobId}] Turnstile solve timeout, will try refresh: ${context.request.url}`);
+                                }
+                            } else {
+                                // No turnstile detected - this is a plain 403, wait and refresh
+                                log.info(`[${queueName}] [${jobId}] 403 Forbidden detected (no Turnstile), waiting 10 seconds before retry: ${context.request.url}`);
+                                await sleep(10000);
+                            }
+                        } else {
+                            // No solver configured - use original behavior
+                            log.info(`[${queueName}] [${jobId}] 403 Forbidden detected, waiting 10 seconds before retry: ${context.request.url}`);
+                            await sleep(10000);
+                        }
+
+                        // Skip refresh if challenge was already bypassed
+                        if ((context as any).__challengeBypassed) {
+                            log.info(`[${queueName}] [${jobId}] Challenge bypassed, skipping refresh and continuing with extraction`);
+                        } else if (!(page.isClosed && page.isClosed())) {
+                            // Only refresh if challenge was NOT bypassed
                             log.info(`[${queueName}] [${jobId}] Attempting to refresh page after wait: ${context.request.url}`);
 
                             // Capture response after reload
@@ -627,8 +765,12 @@ export abstract class BaseEngine {
                             page.on('response', responseHandler);
 
                             try {
-                                // Reload the page and wait for network idle
-                                await page.reload({ waitUntil: 'networkidle' });
+                                // Get navigation options from request config or environment
+                                const navTimeout = context.request.userData?.options?.timeout || parseInt(process.env.ANYCRAWL_NAV_TIMEOUT || '30000', 10);
+                                const navWaitUntil = context.request.userData?.options?.wait_until || process.env.ANYCRAWL_NAV_WAIT_UNTIL || 'domcontentloaded';
+
+                                // Reload the page with configured options
+                                await page.reload({ waitUntil: navWaitUntil, timeout: navTimeout });
 
                                 // Wait a bit for the page to fully stabilize
                                 await sleep(1000);
@@ -683,6 +825,12 @@ export abstract class BaseEngine {
             // check if http status code is 400 or higher
             // Note: 403 refresh logic is already handled earlier in the handler (before this check)
             let isHttpError = await checkHttpError(context);
+
+            // If challenge was bypassed, don't treat original 403 as an error
+            if ((context as any).__challengeBypassed) {
+                log.info(`[requestHandler] Challenge bypassed, ignoring original 403 status`);
+                isHttpError = false;
+            }
 
             // Cheerio traffic tracking (browser engines use CDP-based tracking)
             try {

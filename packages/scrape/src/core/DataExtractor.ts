@@ -92,13 +92,64 @@ export class DataExtractor {
     }
 
     /**
+     * Wait for page to be ready (document.body exists and page is not navigating)
+     */
+    private async waitForPageReady(page: any, timeoutMs: number = 10000): Promise<boolean> {
+        const startTime = Date.now();
+        const checkInterval = 100;
+
+        while (Date.now() - startTime < timeoutMs) {
+            try {
+                // Check if page is closed
+                if (page.isClosed && page.isClosed()) {
+                    return false;
+                }
+
+                // Check if document.body exists
+                const isReady = await page.evaluate(() => {
+                    return document.body !== null && document.readyState !== 'loading';
+                });
+
+                if (isReady) {
+                    return true;
+                }
+            } catch (e) {
+                // Page might be navigating, wait and retry
+                log.debug(`[waitForPageReady] Check failed: ${e}`);
+            }
+
+            await new Promise(resolve => setTimeout(resolve, checkInterval));
+        }
+
+        return false;
+    }
+
+    /**
      * Get cheerio instance using unified approach
      */
     async getCheerioInstance(context: any): Promise<any> {
         let $ = null;
+        const page = context.page;
+
+        // For browser engines, wait for page to be ready before parsing
+        if (page && typeof page.evaluate === 'function') {
+            const isReady = await this.waitForPageReady(page, 10000);
+            if (!isReady) {
+                log.debug('[getCheerioInstance] Page not ready after waiting, falling back to page.content()');
+            }
+        }
+
         try {
             if (context.parseWithCheerio) {
                 // Playwright and Puppeteer have parseWithCheerio method
+                // Double-check document.body exists before calling parseWithCheerio
+                if (page && typeof page.evaluate === 'function') {
+                    const bodyExists = await page.evaluate(() => document.body !== null).catch(() => false);
+                    if (!bodyExists) {
+                        log.debug('[getCheerioInstance] document.body is null, skipping parseWithCheerio');
+                        throw new Error('document.body is null');
+                    }
+                }
                 $ = await context.parseWithCheerio();
             } else if (context.$ && context.$ !== undefined) {
                 // CheerioEngine uses existing $ object
@@ -110,12 +161,12 @@ export class DataExtractor {
 
         if ($ === null || $ === undefined) {
             try {
-                if (context.page && context.page.content && typeof context.page.content === "function") {
+                if (page && page.content && typeof page.content === "function") {
                     // Check if page is closed before trying to get content
-                    if ((context.page as any).isClosed && (context.page as any).isClosed()) {
+                    if (page.isClosed && page.isClosed()) {
                         throw new Error("Page is closed");
                     }
-                    const html = await context.page.content();
+                    const html = await page.content();
                     return this.convertTextToCheerio(html);
                 } else if (context.body) {
                     return this.convertTextToCheerio(context.body.toString("utf-8"));
