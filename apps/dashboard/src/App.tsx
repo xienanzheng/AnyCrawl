@@ -27,6 +27,8 @@ type TravelTarget = {
   type: "flight" | "hotel";
   title: string;
   url: string;
+  jsonOptions?: Record<string, unknown>;
+  forceEngine?: string;
 };
 
 type TaskDefinition = {
@@ -36,6 +38,7 @@ type TaskDefinition = {
   type: "flight" | "hotel";
   fields: TaskField[];
   buildTargets: (values: Record<string, string>) => TravelTarget[];
+  forceEngine?: string;
 };
 
 const DEFAULT_BASE_URL = "http://localhost:8080";
@@ -132,6 +135,99 @@ const summarizeSnippet = (markdown?: string) =>
     .slice(0, 6)
     .join(" • ");
 
+const getArrayFromMaybe = (value: any): any[] | null => {
+  if (!value) return null;
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.options)) return value.options;
+  if (Array.isArray(value?.items)) return value.items;
+  if (Array.isArray(value?.data)) return value.data;
+  return null;
+};
+
+type AggregatedOption = {
+  vendor: string;
+  type: "flight" | "hotel";
+  sourceUrl: string;
+  price?: number;
+  priceText?: string;
+  currency?: string;
+  carrier?: string;
+  summary?: string;
+  metadata?: any;
+};
+
+const normalizeStructuredOptions = (
+  structured: any,
+  target: TravelTarget,
+  fallbackMarkdown?: string
+): AggregatedOption[] => {
+  const array = getArrayFromMaybe(structured);
+  if (!array || !array.length) {
+    const priceInfo = detectPrice(fallbackMarkdown);
+    return [
+      {
+        vendor: target.vendor,
+        type: target.type,
+        sourceUrl: target.url,
+        price: priceInfo.price,
+        priceText: priceInfo.priceText,
+        summary: summarizeSnippet(fallbackMarkdown),
+        metadata: structured ?? null,
+      },
+    ];
+  }
+  return array.map((item: any) => ({
+    vendor: target.vendor,
+    type: target.type,
+    sourceUrl: target.url,
+    price: item.price_value ?? item.price ?? item.priceValue ?? item.amount,
+    priceText: item.price_text ?? item.priceText ?? item.price_label ?? item.price_display,
+    currency: item.currency ?? item.currency_code ?? "USD",
+    carrier: item.airline ?? item.carrier ?? item.hotel_name ?? item.name,
+    summary: item.summary ?? item.description ?? summarizeSnippet(fallbackMarkdown),
+    metadata: item,
+  }));
+};
+
+const FLIGHT_OPTION_SCHEMA = {
+  type: "array",
+  items: {
+    type: "object",
+    properties: {
+      airline: { type: "string" },
+      flight_number: { type: "string" },
+      depart_time: { type: "string" },
+      arrive_time: { type: "string" },
+      duration: { type: "string" },
+      price_text: { type: "string" },
+      price_value: { type: "number" },
+      currency: { type: "string" },
+      booking_url: { type: "string" },
+      summary: { type: "string" },
+    },
+    required: ["price_text"],
+  },
+};
+
+const HOTEL_OPTION_SCHEMA = {
+  type: "array",
+  items: {
+    type: "object",
+    properties: {
+      hotel_name: { type: "string" },
+      neighborhood: { type: "string" },
+      rating: { type: "string" },
+      amenities: { type: "array", items: { type: "string" } },
+      price_text: { type: "string" },
+      price_value: { type: "number" },
+      currency: { type: "string" },
+      booking_url: { type: "string" },
+      summary: { type: "string" },
+    },
+    required: ["price_text"],
+  },
+};
+
 const GOOGLE_FLIGHTS_TASK: TaskDefinition = {
   id: "google-flights",
   label: "Google Flights (price scan)",
@@ -158,11 +254,28 @@ const GOOGLE_FLIGHTS_TASK: TaskDefinition = {
           type: "flight",
           title: `${values.origin} → ${values.destination} ${depart}${ret ? ` / ${ret}` : ""}`,
           url: buildGoogleFlightsUrl(values.origin, values.destination, depart, ret),
+          forceEngine: "playwright",
+          jsonOptions: {
+            schema: {
+              type: "object",
+              properties: {
+                options: FLIGHT_OPTION_SCHEMA,
+                notes: { type: "string" },
+              },
+              required: ["options"],
+            },
+            user_prompt: `Extract up to 3 flight itineraries for ${values.origin} to ${values.destination} departing ${
+              depart ?? "unknown"
+            }${ret ? ` and returning ${ret}` : ""}. For each option, include airline, flight_number if present, depart_time, arrive_time, duration, price_text, price_value (number only), currency, booking_url, and a short summary.`,
+            schema_name: "FlightOptions",
+            schema_description: "Structured list of flight options with price and timing information.",
+          },
         });
       });
     });
     return targets;
   },
+  forceEngine: "playwright",
 };
 
 const EXPEDIA_HOTELS_TASK: TaskDefinition = {
@@ -185,8 +298,23 @@ const EXPEDIA_HOTELS_TASK: TaskDefinition = {
       type: "hotel",
       title: `${values.city} stay starting ${checkIn}`,
       url: buildExpediaHotelUrl(values.city, checkIn, nights),
+      forceEngine: "playwright",
+      jsonOptions: {
+        schema: {
+          type: "object",
+          properties: {
+            options: HOTEL_OPTION_SCHEMA,
+            notes: { type: "string" },
+          },
+          required: ["options"],
+        },
+        user_prompt: `Extract up to 3 hotel options for ${values.city} checking in ${checkIn} for ${nights} nights. Provide hotel_name, neighborhood, rating (if available), amenities list, price_text, price_value (number), currency, booking_url, and a short summary.`,
+        schema_name: "HotelOptions",
+        schema_description: "Structured list of hotel options with nightly price information.",
+      },
     }));
   },
+  forceEngine: "playwright",
 };
 
 const TASKS: TaskDefinition[] = [GOOGLE_FLIGHTS_TASK, EXPEDIA_HOTELS_TASK];
@@ -200,6 +328,12 @@ const LLM_PROVIDERS = [
   { label: "Disabled", value: "none" },
   { label: "OpenAI-compatible", value: "openai" },
   { label: "Google Gemini", value: "gemini" },
+];
+
+const STEP_LIST = [
+  { id: 1, label: "Connect Keys" },
+  { id: 2, label: "Pick Intent" },
+  { id: 3, label: "Run & Summarize" },
 ];
 
 export default function App() {
@@ -232,6 +366,9 @@ export default function App() {
   const [rawResult, setRawResult] = useState<ToolResult | null>(null);
   const [llmResult, setLlmResult] = useState<ToolResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const connectionReady = Boolean(baseUrl && apiKey);
+  const hasResults = Boolean(rawResult);
+  const activeStep = !connectionReady ? 1 : hasResults ? 3 : 2;
 
   const updateInput = (name: string, value: string) => {
     setTaskInputs((prev) => ({ ...prev, [name]: value }));
@@ -255,21 +392,35 @@ export default function App() {
       });
       const targets = selectedTask.buildTargets(taskInputs);
       if (!targets.length) throw new Error("No crawl targets were generated. Please adjust your date range.");
+      const aggregatedOptions: AggregatedOption[] = [];
       const scrapePayloads = await Promise.all(
         targets.map(async (target) => {
           try {
-            const response = await requestWithRetry<any>('/v1/scrape', { url: target.url, engine: scrapeEngine }, config);
+            const engineToUse = target.forceEngine ?? selectedTask.forceEngine ?? scrapeEngine;
+            const body: Record<string, unknown> = {
+              url: target.url,
+              engine: engineToUse,
+              extract_source: "markdown",
+              formats: ["markdown", "json"],
+            };
+            if (target.jsonOptions) body.json_options = target.jsonOptions;
+            const response = await requestWithRetry<any>("/v1/scrape", body, config);
             const data = response?.data ?? response;
-            const markdown = typeof data === 'object' && data?.markdown ? data.markdown : JSON.stringify(data, null, 2);
-            const priceInfo = detectPrice(markdown);
+            const markdown =
+              typeof data === "object" && typeof data?.markdown === "string"
+                ? data.markdown
+                : JSON.stringify(data, null, 2);
+            const structured = data?.json ?? data?.structured ?? null;
+            const normalized = normalizeStructuredOptions(structured, target, markdown);
+            aggregatedOptions.push(...normalized);
             return {
               success: true,
               target,
+              engine: engineToUse,
               title: data?.title ?? target.title,
               markdown,
               snippet: summarizeSnippet(markdown),
-              price: priceInfo.price,
-              priceText: priceInfo.priceText,
+              structured,
               raw: data,
             };
           } catch (error) {
@@ -284,7 +435,8 @@ export default function App() {
       const aggregated = {
         task: selectedTask.id,
         inputs: taskInputs,
-        engine: scrapeEngine,
+        engine: selectedTask.forceEngine ?? scrapeEngine,
+        options: aggregatedOptions,
         targets: scrapePayloads,
       };
       const summaryTitle = `${selectedTask.label} • ${new Date().toLocaleString()}`;
@@ -318,10 +470,17 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <header>
-        <div>
-          <h1>AnyCrawl Travel Console</h1>
-          <p>Connect your crawler, choose an intent (Google Flights or Expedia Hotels), and let the LLM summarize the best options.</p>
+      <header className="hero">
+        <div className="hero-copy">
+          <p className="brand-pill">AnyCrawl Studio</p>
+          <h1>Travel-ready intelligence in three elegant steps.</h1>
+          <p>
+            Connect your crawler, declare what you need (flights or hotels), and receive structured comparisons plus an
+            LLM-friendly briefing you can forward to teams or clients.
+          </p>
+        </div>
+        <div className="hero-panel">
+          <StepIndicator steps={STEP_LIST} active={activeStep} />
         </div>
       </header>
 
@@ -398,25 +557,15 @@ export default function App() {
       </section>
 
       <section className="panel">
-        <h2>3. Intent-driven crawl</h2>
-        <p className="helper-text">Select a template, provide the required inputs, then let AnyCrawl fetch the data.</p>
-        <label>
-          Intent
-          <select
-            value={taskId}
-            onChange={(e) => {
-              setTaskId(e.target.value);
-            }}
-          >
-            {TASKS.map((task) => (
-              <option key={task.id} value={task.id}>
-                {task.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <p>{selectedTask.description}</p>
-        <div className="grid two">
+        <div className="panel-head">
+          <div>
+            <h2>3. Intent-driven crawl</h2>
+            <p className="helper-text">Pick a template card, fill the fields, and AnyCrawl will do the rest.</p>
+          </div>
+        </div>
+        <TaskSwitcher tasks={TASKS} activeId={taskId} onSelect={setTaskId} />
+        <p className="intent-description">{selectedTask.description}</p>
+        <div className="grid two form-grid">
           {selectedTask.fields.map((field) => (
             <label key={field.name}>
               {field.label}
@@ -447,9 +596,15 @@ export default function App() {
             </label>
           ))}
         </div>
-        <button className="primary" disabled={loading} onClick={runTask}>
-          {loading ? "Running..." : `Run ${selectedTask.label}`}
-        </button>
+        <div className="cta-row">
+          <div className="cta-copy">
+            <strong>Targets generated automatically</strong>
+            <p className="helper-text">Playwright engine is enforced for these intents to capture live pricing.</p>
+          </div>
+          <button className="primary large" disabled={loading} onClick={runTask}>
+            {loading ? "Running..." : `Run ${selectedTask.label}`}
+          </button>
+        </div>
       </section>
 
       <section className="panel">
@@ -495,6 +650,43 @@ const ResultCard = ({ result }: { result: ToolResult | null }) => {
     </div>
   );
 };
+
+const StepIndicator = ({ steps, active }: { steps: { id: number; label: string }[]; active: number }) => (
+  <ol className="stepper">
+    {steps.map((step) => (
+      <li key={step.id} className={`step ${active === step.id ? "active" : active > step.id ? "done" : ""}`}>
+        <span className="step-index">{step.id}</span>
+        <span className="step-label">{step.label}</span>
+      </li>
+    ))}
+  </ol>
+);
+
+const TaskSwitcher = ({
+  tasks,
+  activeId,
+  onSelect,
+}: {
+  tasks: TaskDefinition[];
+  activeId: string;
+  onSelect: (id: string) => void;
+}) => (
+  <div className="task-switcher">
+    {tasks.map((task) => {
+      const active = task.id === activeId;
+      return (
+        <button key={task.id} className={`task-card ${active ? "active" : ""}`} onClick={() => onSelect(task.id)}>
+          <div className="task-card-header">
+            <span className={`task-pill ${task.type}`}>{task.type === "flight" ? "Flights" : "Hotels"}</span>
+            {active && <span className="task-active-dot">Selected</span>}
+          </div>
+          <h3>{task.label}</h3>
+          <p>{task.description}</p>
+        </button>
+      );
+    })}
+  </div>
+);
 
 const runLlmSummarizer = async (
   provider: string,

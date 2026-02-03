@@ -15,6 +15,6 @@ Visit http://localhost:5175, enter your AnyCrawl base URL + API key (stored loca
 1. (Optional) Provide OpenAI or Gemini LLM credentials + prompt so summaries run automatically.
 2. Select an intent (Google Flights date-range scan or Expedia Hotels multi-night scan).
 3. Fill in the required fields (origins, destinations, date windows, etc.).
-4. Click “Run” — the dashboard will build the correct flight/hotel URLs, scrape them through AnyCrawl, and show both the raw JSON and the simplified LLM response.
+4. Click “Run” — the dashboard forces a Playwright scrape, asks AnyCrawl to return structured JSON (price, airline/hotel info, links), and shows both the raw payload and an optional LLM summary you can copy elsewhere.
 
 The UI retries each API call once before surfacing actionable errors and wraps all responses inside `{ status, summary, data }` result cards to make copying results into agents easier.
