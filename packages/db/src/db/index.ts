@@ -1,6 +1,8 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { drizzle as drizzleSQLite } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
+import { dirname } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
 import * as sqliteSchema from "./schemas/SQLite.js";
 import * as postgresqlSchema from "./schemas/PostgreSQL.js";
 import { Client } from "pg";
@@ -12,6 +14,26 @@ export const schemas = (
 
 let dbInstance: ReturnType<typeof drizzle> | ReturnType<typeof drizzleSQLite> | null = null;
 
+const normalizeSqlitePath = (connectionString: string) => {
+    if (!connectionString.startsWith("file:")) return connectionString;
+    try {
+        const url = new URL(connectionString);
+        if (url.protocol === "file:") {
+            return decodeURIComponent(url.pathname || "");
+        }
+    } catch {
+        // Ignore URL parsing errors and fall through to fallback logic.
+    }
+    return connectionString.replace(/^file:/, "");
+};
+
+const ensureDirectory = (filePath: string) => {
+    const directory = dirname(filePath);
+    if (!existsSync(directory)) {
+        mkdirSync(directory, { recursive: true });
+    }
+};
+
 export const initializeDatabase = async () => {
     if (dbInstance) return dbInstance;
     log.info(`Initializing database with type: ${process.env.ANYCRAWL_API_DB_TYPE}`);
@@ -19,7 +41,12 @@ export const initializeDatabase = async () => {
     switch (dbType) {
         case "sqlite":
             log.info("Using SQLite database");
-            const sqlite = new Database(process.env.ANYCRAWL_API_DB_CONNECTION);
+            if (!process.env.ANYCRAWL_API_DB_CONNECTION) {
+                throw new Error("ANYCRAWL_API_DB_CONNECTION environment variable is required");
+            }
+            const sqlitePath = normalizeSqlitePath(process.env.ANYCRAWL_API_DB_CONNECTION);
+            ensureDirectory(sqlitePath);
+            const sqlite = new Database(sqlitePath);
             dbInstance = drizzleSQLite(sqlite, { schema: sqliteSchema });
             return dbInstance;
         case "postgresql":

@@ -1,0 +1,178 @@
+:root {
+  font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #0f172a;
+  background-color: #f4f6fb;
+  line-height: 1.5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f4f6fb;
+}
+
+.app-shell {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+}
+
+header h1 {
+  margin: 0 0 0.25rem;
+}
+
+.panel {
+  background: #fff;
+  border-radius: 16px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.08);
+}
+
+.panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.grid {
+  display: grid;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.grid.two {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.grid.three {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #1e293b;
+}
+
+input,
+select,
+textarea {
+  margin-top: 0.35rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid #cbd5f5;
+  font: inherit;
+  background: #f8fafc;
+}
+
+textarea {
+  resize: vertical;
+}
+
+button {
+  font: inherit;
+  border: none;
+  border-radius: 12px;
+  padding: 0.85rem 1rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+button.primary {
+  background: #4338ca;
+  color: #fff;
+}
+
+button.primary:disabled {
+  background: #c7d2fe;
+  cursor: wait;
+}
+
+button.secondary {
+  background: #e0e7ff;
+  color: #312e81;
+}
+
+button.full {
+  width: 100%;
+}
+
+.result-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 1rem;
+  margin-top: 0.5rem;
+  background: #f8fafc;
+}
+
+.result-card.success {
+  border-color: #bbf7d0;
+}
+
+.result-card.error {
+  border-color: #fecaca;
+}
+
+.result-meta {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.result-meta .timestamp {
+  color: #64748b;
+  font-size: 0.85rem;
+}
+
+.error-text {
+  color: #dc2626;
+  margin: 0 0 0.5rem;
+}
+
+.json-view {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 0.75rem;
+  border-radius: 10px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+footer {
+  text-align: center;
+  color: #475569;
+  font-size: 0.9rem;
+  padding-bottom: 1rem;
+}
+
+code {
+  background: #e0e7ff;
+  padding: 0.1rem 0.35rem;
+  border-radius: 6px;
+}
+
+.helper-text {
+  color: #475569;
+  font-size: 0.85rem;
+  margin-top: 0.35rem;
+  margin-bottom: 0.75rem;
+}
